@@ -1,41 +1,45 @@
 use ExtUtils::MakeMaker;
 use Config;
 
-my $cc;
-if (defined($ENV{'CC'})) {
-	$cc = $ENV{'CC'};
-} else {
-	$cc = $Config{'cc'};
-}
-my $libs = '';
+use Devel::CheckLib qw(check_lib);
 
-unless (conftest("char *x = gettext(\"foo\");", "gettext", 0)) {
-	# try with -lintl
-	$libs = "-lintl";
-	unless (conftest("char *x = gettext(\"foo\");", "gettext", 0)) {
-		unlink("conftest.c");
-		unlink("conftest");
-		die "gettext function not found. Please install libintl";
-	}
+
+my %cl_opts = (header => 'libintl.h', debug => 1);
+unless (check_lib(function => 'char *x = gettext("foo"); return 0;', %cl_opts)) {
+    $cl_opts{lib} = 'intl';
+    unless (check_lib(function => 'char *x = gettext("foo"); return 0;', %cl_opts)) {
+        die "gettext not supported!\n";
+    }
 }
 
 open(CONFIG, ">config.h");
 print CONFIG "/* Generated automatically by ", $0, ". Do not edit */\n";
 
-conftest("char *x = dcgettext(\"foo\", \"bar\", 0);", "dgettext", 1);
-conftest("char *x = ngettext(\"foo\", \"foos\", 1);", "ngettext", 1);
-conftest("char *x = bind_textdomain_codeset(\"foo\", \"UTF-8\");", "bind_textdomain_codeset", 1);
+sub test_func {
+    my $fn = shift;
+    my $code = shift;
+    my $expected = shift || 0;
+    check_lib(%cl_opts,
+              function => "$code; exit(0);",
+              analize_binary => sub {
+                  if (system $_[1] == $expected) {
+                      print CONFIG "HAVE_" .uc($fn)." 1\n";
+                  }
+              });
 
+    print CONFIG "#define HAVE_" .uc($fn)." 1\n";
+}
+
+test_func(dgettext => 'char *x = dcgettext("foo", "bar", 0)', 1);
+test_func(ngettext => 'char *x = ngettext("foo", "foos", 1)', 1);
+test_func(bind_textdomain_codeset => 'char *x = bind_textdomain_codeset("foo", "UTF-8")', 1);
 close CONFIG;
-
-unlink("conftest.c");
-unlink("conftest");
 
 WriteMakefile(
     NAME => "Locale::gettext",
-    LIBS => ($libs eq '') ? [] : [$libs],
     VERSION_FROM => 'gettext.pm',
-	LICENSE => 'perl_5',
+    LICENSE => 'perl_5',
+    (defined $cl_opts{lib} ? (LIBS => "-l$cl_opts{lib}") : ()),
     META_MERGE => {
         resources => {
             repository => 'https://github.com/vandry/Perl-Locale-gettext',
@@ -46,31 +50,3 @@ WriteMakefile(
     AUTHOR => "Kim Vandry <vandry@TZoNE.ORG>",
     LICENSE => 'perl',
 );
-
-sub conftest {
-	my ($testcode, $func, $record) = @_;
-
-	print "checking for ", $func;
-	print(" in ", $libs) if ($libs ne '');
-	print "...";
-	open(TEST, ">conftest.c");
-	print TEST "#include <libintl.h>\n\nint main(int argc, char **argv)\n{\n";
-	print TEST $testcode;
-	print TEST "return 0;}\n";
-	close TEST;
-	open(SAVE, ">&STDERR");
-	open(STDERR, ">/dev/null");
-	system($cc . " -o conftest " . " conftest.c " . $libs);
-	my $exitstatus = $?;
-	open(STDERR, ">&SAVE");
-	if ($exitstatus != 0) {
-		print " no\n";
-		return 0;
-	} else {
-		print " yes\n";
-		if ($record) {
-			print CONFIG "#define HAVE_", uc($func), "\n";
-		}
-		return 1;
-	}
-}
