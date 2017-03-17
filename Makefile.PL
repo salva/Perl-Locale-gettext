@@ -1,45 +1,46 @@
 use ExtUtils::MakeMaker;
 use Config;
 
-use Devel::CheckLib qw(check_lib);
-
-
-my %cl_opts = (header => 'libintl.h', debug => 1);
-unless (check_lib(function => 'char *x = gettext("foo"); return 0;', %cl_opts)) {
-    $cl_opts{lib} = 'intl';
-    unless (check_lib(function => 'char *x = gettext("foo"); return 0;', %cl_opts)) {
-        die "gettext not supported!\n";
+my @LIBS;
+my %define;
+use Config::AutoConf;
+my $ac = Config::AutoConf->new;
+$ac->check_valid_compiler() or die;
+unless ($ac->check_header('libintl.h')) {
+    if ($^O eq 'MSWin32' and eval { require Alien::WinBuilds; 1}) {
+        warn "Using Alien::WinBuilds to install required libraries...\n";
+        my $awb = Alien::WinBuilds->new;
+        $awb->web('win-iconv', 'gettext');
+        $ac = Config::AutoConf->new;
+        $ac->check_valid_compiler() or die;
+        $ac->push_library_paths($awb->lib);
+        push @LIBS, '-L' . $awb->lib;
+        $ac->push_includes($awb->include);
+        $ac->check_header('libintl.h') or die;
+    }
+    else {
+        die;
     }
 }
 
-open(CONFIG, ">config.h");
-print CONFIG "/* Generated automatically by ", $0, ". Do not edit */\n";
-
-sub test_func {
-    my $fn = shift;
-    my $code = shift;
-    my $expected = shift || 0;
-    check_lib(%cl_opts,
-              function => "$code; exit(0);",
-              analize_binary => sub {
-                  if (system $_[1] == $expected) {
-                      print CONFIG "HAVE_" .uc($fn)." 1\n";
-                  }
-              });
-
-    print CONFIG "#define HAVE_" .uc($fn)." 1\n";
+for my $symbol (qw(gettext dgettext dcgettext ngettext bind_textdomain_codeset)) {
+    if (my $lib = $ac->search_libs($symbol, ['intl'])) {
+        $libs{$lib} = 1 unless $lib eq 'none required';
+    }
+    else {
+        die if $symbol eq 'gettext';
+    }
 }
 
-test_func(dgettext => 'char *x = dcgettext("foo", "bar", 0)', 1);
-test_func(ngettext => 'char *x = ngettext("foo", "foos", 1)', 1);
-test_func(bind_textdomain_codeset => 'char *x = bind_textdomain_codeset("foo", "UTF-8")', 1);
-close CONFIG;
+push @LIBS, map "-l$_" for sort keys %libs;
+
+$ac->write_config_h;
 
 WriteMakefile(
     NAME => "Locale::gettext",
     VERSION_FROM => 'gettext.pm',
     LICENSE => 'perl_5',
-    (defined $cl_opts{lib} ? (LIBS => "-l$cl_opts{lib}") : ()),
+    (@LIBS ? (LIBS => join ' ', @LIBS) : ()),
     META_MERGE => {
         resources => {
             repository => 'https://github.com/vandry/Perl-Locale-gettext',

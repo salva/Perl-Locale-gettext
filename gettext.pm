@@ -38,10 +38,9 @@ use Carp;
 use POSIX qw(:locale_h);
 
 require Exporter;
-require DynaLoader;
 
 use vars '$AUTOLOAD';
-our @ISA = qw(Exporter DynaLoader);
+our @ISA = qw(Exporter);
 
 my $encode_available;
 
@@ -68,7 +67,14 @@ Exporter::export_tags();
 our @EXPORT_OK = qw(
 );
 
-bootstrap Locale::gettext $VERSION;
+if ($^O =~ /^MSWin32/i) {
+    require Alien::WinBuilds::XSLoader;
+    Alien::WinBuilds::XSLoader::load(__PACKAGE__, $VERSION);
+}
+else {
+    require XSLoader;
+    XSLoader::load(__PACKAGE__, $VERSION);
+}
 
 sub AUTOLOAD {
     local $! = 0;
